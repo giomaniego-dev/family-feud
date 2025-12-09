@@ -41,7 +41,12 @@ io.sockets.on('connection', (socket) => {
             flippedCards: [],
             team1Score: 0,
             team2Score: 0,
-            boardScore: 0
+            boardScore: 0,
+            audioSettings: {
+                isMuted: false,
+                backgroundVolume: 0.3,
+                sfxVolume: 0.7
+            }
         };
         socket.join(gameCode);
         socket.gameCode = gameCode;
@@ -67,7 +72,8 @@ io.sockets.on('connection', (socket) => {
                     flippedCards: game.flippedCards,
                     team1Score: game.team1Score,
                     team2Score: game.team2Score,
-                    boardScore: game.boardScore
+                    boardScore: game.boardScore,
+                    audioSettings: game.audioSettings
                 }
             });
             // Notify other players
@@ -123,8 +129,61 @@ io.sockets.on('connection', (socket) => {
                 flippedCards: game.flippedCards || [],
                 team1Score: game.team1Score || 0,
                 team2Score: game.team2Score || 0,
-                boardScore: game.boardScore || 0
+                boardScore: game.boardScore || 0,
+                audioSettings: game.audioSettings
             });
+        }
+    });
+    
+    // Handle audio control changes from host
+    socket.on('audioControl', (data) => {
+        if (socket.gameCode && games[socket.gameCode]) {
+            const game = games[socket.gameCode];
+            // Only allow host to control audio
+            if (game.host === socket.id) {
+                // Update game audio settings
+                if (data.type === 'mute') {
+                    game.audioSettings.isMuted = data.isMuted;
+                } else if (data.type === 'backgroundVolume') {
+                    game.audioSettings.backgroundVolume = data.volume;
+                } else if (data.type === 'sfxVolume') {
+                    game.audioSettings.sfxVolume = data.volume;
+                }
+                // Broadcast to all players in the game
+                io.to(socket.gameCode).emit('audioUpdate', {
+                    type: data.type,
+                    isMuted: game.audioSettings.isMuted,
+                    backgroundVolume: game.audioSettings.backgroundVolume,
+                    sfxVolume: game.audioSettings.sfxVolume
+                });
+            }
+        }
+    });
+
+    // Handle localStorage sync from host
+    socket.on('localStorageSync', (data) => {
+        if (socket.gameCode && games[socket.gameCode]) {
+            const game = games[socket.gameCode];
+            // Only allow host to sync localStorage
+            if (game.host === socket.id) {
+                // Broadcast to all players in the game (except the host)
+                socket.to(socket.gameCode).emit('localStorageSync', {
+                    data: data.data
+                });
+                console.log('Broadcasted localStorage sync to players in game:', socket.gameCode);
+            }
+        }
+    });
+    
+    // Handle localStorage sync request from players
+    socket.on('requestLocalStorageSync', (data) => {
+        if (socket.gameCode && games[socket.gameCode]) {
+            const game = games[socket.gameCode];
+            // Forward request to host
+            io.to(game.host).emit('requestLocalStorageSync', {
+                fromSocketId: socket.id
+            });
+            console.log('Forwarded localStorage sync request to host from:', socket.id);
         }
     });
 

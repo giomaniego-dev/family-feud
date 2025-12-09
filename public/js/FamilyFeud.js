@@ -1,5 +1,247 @@
 console.clear()
 
+// Audio Manager for Family Feud sounds
+var audioManager = {
+    sounds: {
+        backgroundMusic: null,
+        cardFlip: null,
+        wrongAnswer: null,
+        gameStart: null,
+        pointsAwarded: null,
+        newQuestion: null
+    },
+    isMuted: false,
+    backgroundVolume: 0.3,
+    sfxVolume: 0.7,
+    
+    init: function() {
+        // Initialize background music (looping)
+        try {
+            this.sounds.backgroundMusic = new Audio('/public/audio/background-music.mp3');
+            this.sounds.backgroundMusic.loop = true;
+            this.sounds.backgroundMusic.volume = this.backgroundVolume;
+            this.sounds.backgroundMusic.addEventListener('error', () => {
+                console.warn('Background music file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize background music:', e);
+        }
+        
+        // Initialize sound effects
+        try {
+            this.sounds.cardFlip = new Audio('/public/audio/card-flip.mp3');
+            this.sounds.cardFlip.volume = this.sfxVolume;
+            this.sounds.cardFlip.addEventListener('error', () => {
+                console.warn('Card flip sound file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize card flip sound:', e);
+        }
+        
+        try {
+            this.sounds.wrongAnswer = new Audio('/public/audio/wrong-answer.mp3');
+            this.sounds.wrongAnswer.volume = this.sfxVolume;
+            this.sounds.wrongAnswer.addEventListener('error', () => {
+                console.warn('Wrong answer sound file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize wrong answer sound:', e);
+        }
+        
+        try {
+            this.sounds.gameStart = new Audio('/public/audio/game-start.mp3');
+            this.sounds.gameStart.volume = this.sfxVolume;
+            this.sounds.gameStart.addEventListener('error', () => {
+                console.warn('Game start sound file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize game start sound:', e);
+        }
+        
+        try {
+            this.sounds.pointsAwarded = new Audio('/public/audio/points-awarded.mp3');
+            this.sounds.pointsAwarded.volume = this.sfxVolume;
+            this.sounds.pointsAwarded.addEventListener('error', () => {
+                console.warn('Points awarded sound file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize points awarded sound:', e);
+        }
+        
+        try {
+            this.sounds.newQuestion = new Audio('/public/audio/new-question.mp3');
+            this.sounds.newQuestion.volume = this.sfxVolume;
+            this.sounds.newQuestion.addEventListener('error', () => {
+                console.warn('New question sound file not found or failed to load');
+            });
+        } catch (e) {
+            console.warn('Failed to initialize new question sound:', e);
+        }
+        
+        // Load saved preferences
+        this.loadPreferences();
+    },
+    
+    playBackgroundMusic: function() {
+        if (!this.isMuted && this.sounds.backgroundMusic) {
+            // Set volume before playing
+            if (this.sounds.backgroundMusic) {
+                this.sounds.backgroundMusic.volume = this.backgroundVolume;
+            }
+            this.sounds.backgroundMusic.play().catch(e => {
+                console.log('Background music play failed (may need user interaction):', e);
+            });
+        }
+    },
+    
+    stopBackgroundMusic: function() {
+        if (this.sounds.backgroundMusic) {
+            this.sounds.backgroundMusic.pause();
+            this.sounds.backgroundMusic.currentTime = 0;
+        }
+    },
+    
+    playSound: function(soundName) {
+        if (this.isMuted || !this.sounds[soundName]) return;
+        
+        try {
+            // Clone and play to allow overlapping sounds
+            var sound = this.sounds[soundName].cloneNode();
+            sound.volume = this.sfxVolume;
+            sound.play().catch(e => {
+                // Silently fail if audio can't play (e.g., user hasn't interacted with page)
+                console.log('Sound play failed (may need user interaction):', soundName);
+            });
+        } catch (e) {
+            console.warn('Error playing sound:', soundName, e);
+        }
+    },
+    
+    toggleMute: function(sendToServer) {
+        this.isMuted = !this.isMuted;
+        if (this.isMuted) {
+            this.stopBackgroundMusic();
+        } else {
+            this.playBackgroundMusic();
+        }
+        this.savePreferences();
+        this.updateMuteButton();
+        
+        // Send to server if host (sendToServer defaults to true)
+        if (sendToServer !== false && typeof app !== 'undefined' && app.isHost && app.socket) {
+            app.socket.emit('audioControl', {
+                type: 'mute',
+                isMuted: this.isMuted
+            });
+        }
+    },
+    
+    setBackgroundVolume: function(volume, sendToServer) {
+        this.backgroundVolume = volume;
+        if (this.sounds.backgroundMusic) {
+            this.sounds.backgroundMusic.volume = volume;
+        }
+        this.savePreferences();
+        
+        // Send to server if host (sendToServer defaults to true)
+        if (sendToServer !== false && typeof app !== 'undefined' && app.isHost && app.socket) {
+            app.socket.emit('audioControl', {
+                type: 'backgroundVolume',
+                volume: volume
+            });
+        }
+    },
+    
+    setSFXVolume: function(volume, sendToServer) {
+        this.sfxVolume = volume;
+        this.savePreferences();
+        
+        // Send to server if host (sendToServer defaults to true)
+        if (sendToServer !== false && typeof app !== 'undefined' && app.isHost && app.socket) {
+            app.socket.emit('audioControl', {
+                type: 'sfxVolume',
+                volume: volume
+            });
+        }
+    },
+    
+    // Apply audio settings from server (for all players)
+    applyAudioSettings: function(settings) {
+        if (settings.isMuted !== undefined) {
+            this.isMuted = settings.isMuted;
+            if (this.isMuted) {
+                this.stopBackgroundMusic();
+            } else {
+                this.playBackgroundMusic();
+            }
+            this.updateMuteButton();
+        }
+        if (settings.backgroundVolume !== undefined) {
+            this.backgroundVolume = settings.backgroundVolume;
+            if (this.sounds.backgroundMusic) {
+                this.sounds.backgroundMusic.volume = settings.backgroundVolume;
+            }
+        }
+        if (settings.sfxVolume !== undefined) {
+            this.sfxVolume = settings.sfxVolume;
+        }
+        // Update UI sliders
+        $('#bgVolumeSlider').val(Math.round(this.backgroundVolume * 100));
+        $('#bgVolumeValue').text(Math.round(this.backgroundVolume * 100));
+        $('#sfxVolumeSlider').val(Math.round(this.sfxVolume * 100));
+        $('#sfxVolumeValue').text(Math.round(this.sfxVolume * 100));
+    },
+    
+    savePreferences: function() {
+        try {
+            localStorage.setItem('familyFeudAudio', JSON.stringify({
+                isMuted: this.isMuted,
+                backgroundVolume: this.backgroundVolume,
+                sfxVolume: this.sfxVolume
+            }));
+        } catch (e) {
+            console.error('Failed to save audio preferences:', e);
+        }
+    },
+    
+    loadPreferences: function() {
+        try {
+            const saved = localStorage.getItem('familyFeudAudio');
+            if (saved) {
+                const prefs = JSON.parse(saved);
+                this.isMuted = prefs.isMuted || false;
+                this.backgroundVolume = prefs.backgroundVolume || 0.3;
+                this.sfxVolume = prefs.sfxVolume || 0.7;
+            }
+        } catch (e) {
+            console.error('Failed to load audio preferences:', e);
+        }
+    },
+    
+    updateMuteButton: function() {
+        var btn = $('#audioMuteBtn');
+        if (btn.length) {
+            btn.text(this.isMuted ? '🔇 Unmute' : '🔊 Mute');
+        }
+    },
+    
+    createAudioControls: function() {
+        return $(`
+            <div class='audioControls'>
+                <button id='audioMuteBtn' class='audioBtn'>🔊 Mute</button>
+                <div class='volumeControl'>
+                    <label>Music: <span id='bgVolumeValue'>${Math.round(this.backgroundVolume * 100)}</span>%</label>
+                    <input type='range' id='bgVolumeSlider' min='0' max='100' value='${Math.round(this.backgroundVolume * 100)}'/>
+                </div>
+                <div class='volumeControl'>
+                    <label>SFX: <span id='sfxVolumeValue'>${Math.round(this.sfxVolume * 100)}</span>%</label>
+                    <input type='range' id='sfxVolumeSlider' min='0' max='100' value='${Math.round(this.sfxVolume * 100)}'/>
+                </div>
+            </div>
+        `);
+    }
+};
+
 var app = {
     version: 1,
     role: "player",
@@ -45,6 +287,9 @@ var app = {
                 </div>
             </div>`),
     board: $(`<div class='gameBoard hide'>
+
+                <!--- Audio Controls --->
+                <div class='audioControlsContainer'></div>
 
                 <!--- Scores --->
                 <div class='score' id='boardScore'>0</div>
@@ -106,6 +351,11 @@ var app = {
         try {
             localStorage.setItem('familyFeudQuestions', JSON.stringify(data));
             console.log('Questions stored in localStorage');
+            
+            // If we're the host and in a game, sync localStorage to all players
+            if (app.isHost && app.gameCode && app.socket) {
+                app.syncLocalStorageToPlayers();
+            }
         } catch (e) {
             console.error('Failed to store questions in localStorage:', e);
         }
@@ -137,6 +387,62 @@ var app = {
             console.error('Failed to load questions from localStorage:', e);
         }
         return false;
+    },
+    
+    // Sync localStorage to all players via WebSocket
+    syncLocalStorageToPlayers: () => {
+        if (!app.isHost || !app.gameCode || !app.socket) return;
+        
+        // Get all localStorage items that start with 'familyFeud'
+        const localStorageData = {};
+        try {
+            for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                if (key && key.startsWith('familyFeud')) {
+                    localStorageData[key] = localStorage.getItem(key);
+                }
+            }
+            
+            // Send to server to broadcast to all players
+            app.socket.emit('localStorageSync', {
+                gameCode: app.gameCode,
+                data: localStorageData
+            });
+            console.log('Synced localStorage to players');
+        } catch (e) {
+            console.error('Failed to sync localStorage:', e);
+        }
+    },
+    
+    // Update localStorage from received data
+    updateLocalStorageFromSync: (data) => {
+        try {
+            for (const key in data) {
+                localStorage.setItem(key, data[key]);
+                console.log('Updated localStorage:', key);
+            }
+            
+            // If questions were synced, reload them
+            if (data.familyFeudQuestions) {
+                const wasLoaded = app.loadQuestionsFromStorage();
+                if (wasLoaded && app.pendingGameState) {
+                    app.syncGameState(app.pendingGameState);
+                    app.pendingGameState = null;
+                }
+            }
+        } catch (e) {
+            console.error('Failed to update localStorage from sync:', e);
+        }
+    },
+    
+    // Request localStorage sync from host
+    requestLocalStorageSync: () => {
+        if (app.gameCode && app.socket && !app.isHost) {
+            app.socket.emit('requestLocalStorageSync', {
+                gameCode: app.gameCode
+            });
+            console.log('Requested localStorage sync from host');
+        }
     },
     
     handleFileUpload: (event) => {
@@ -319,6 +625,8 @@ var app = {
             var: parseInt(team.html())
         };
         var teamScoreUpdated = targetScore !== undefined ? targetScore : (teamScore.var + currentScore.var);
+        // Play points awarded sound
+        audioManager.playSound('pointsAwarded');
         TweenMax.to(teamScore, 1, {
             var: teamScoreUpdated,
             onUpdate: function () {
@@ -355,6 +663,11 @@ var app = {
             app.board.find("#boardScore").html(gameState.boardScore);
         }
         
+        // Sync audio settings
+        if (gameState.audioSettings) {
+            audioManager.applyAudioSettings(gameState.audioSettings);
+        }
+        
         // Recalculate board score after syncing flipped cards
         if (gameState.flippedCards && gameState.flippedCards.length > 0) {
             setTimeout(() => {
@@ -368,6 +681,8 @@ var app = {
         } else {
             app.currentQ++;
         }
+        // Play new question sound
+        audioManager.playSound('newQuestion');
         app.makeQuestion(app.currentQ);
     },
     makeHost: () => {
@@ -375,6 +690,23 @@ var app = {
         app.isHost = true;
         app.board.find(".hide").removeClass('hide');
         app.board.addClass('showHost');
+        // Show audio controls for host
+        app.board.find('.audioControlsContainer').removeClass('hide');
+        // Sync current audio settings to server when becoming host
+        if (app.socket && app.gameCode) {
+            app.socket.emit('audioControl', {
+                type: 'backgroundVolume',
+                volume: audioManager.backgroundVolume
+            });
+            app.socket.emit('audioControl', {
+                type: 'sfxVolume',
+                volume: audioManager.sfxVolume
+            });
+            app.socket.emit('audioControl', {
+                type: 'mute',
+                isMuted: audioManager.isMuted
+            });
+        }
         app.socket.emit("talking", {
             trigger: 'hostAssigned'
         });
@@ -393,6 +725,11 @@ var app = {
     startGame: () => {
         app.lobby.addClass('hide');
         app.board.removeClass('hide');
+        // Play game start sound and start background music
+        audioManager.playSound('gameStart');
+        setTimeout(() => {
+            audioManager.playBackgroundMusic();
+        }, 500);
         if (app.isHost) {
             // Host starts at question 0
             app.currentQ = 0;
@@ -400,12 +737,16 @@ var app = {
                 app.makeQuestion(0);
             }
             app.makeHost();
+            // Show audio controls for host (makeHost also does this, but ensure it's shown)
+            app.board.find('.audioControlsContainer').removeClass('hide');
             // Sync initial state to server
             app.socket.emit("talking", {
                 trigger: 'newQuestion',
                 questionIndex: 0
             });
         } else {
+            // Hide audio controls for non-host players
+            app.board.find('.audioControlsContainer').addClass('hide');
             // Request current game state when joining as audience
             app.socket.emit('requestGameState');
         }
@@ -422,6 +763,10 @@ var app = {
         });
         flipped = !flipped;
         $(card).data("flipped", flipped);
+        // Play card flip sound
+        if (flipped) {
+            audioManager.playSound('cardFlip');
+        }
         app.getBoardScore()
     },
     wrongAnswer:()=>{
@@ -430,6 +775,8 @@ var app = {
         var wrong = app.board.find(".wrongBoard")
         $(wrong).find("img:nth-child("+app.wrong+")").show()
         $(wrong).show()
+        // Play wrong answer sound
+        audioManager.playSound('wrongAnswer');
         setTimeout(() => { 
             $(wrong).hide(); 
         }, 1000); 
@@ -466,9 +813,36 @@ var app = {
     
     // Inital function
     init: () => {
+        // Initialize audio manager
+        audioManager.init();
+        
         // Append lobby and board to body first
         $('body').append(app.lobby);
         $('body').append(app.board);
+        
+        // Add audio controls to board (hidden by default, shown only for host)
+        var audioControls = audioManager.createAudioControls();
+        app.board.find('.audioControlsContainer').append(audioControls).addClass('hide');
+        
+        // Audio control event listeners (use event delegation since controls may be hidden)
+        $(document).on('click', '#audioMuteBtn', () => {
+            audioManager.toggleMute();
+        });
+        
+        $(document).on('input', '#bgVolumeSlider', function() {
+            var volume = $(this).val() / 100;
+            audioManager.setBackgroundVolume(volume);
+            $('#bgVolumeValue').text(Math.round(volume * 100));
+        });
+        
+        $(document).on('input', '#sfxVolumeSlider', function() {
+            var volume = $(this).val() / 100;
+            audioManager.setSFXVolume(volume);
+            $('#sfxVolumeValue').text(Math.round(volume * 100));
+        });
+        
+        // Update mute button display
+        audioManager.updateMuteButton();
         
         // File upload event listener
         $('#questionsFile').on('change', app.handleFileUpload);
@@ -506,11 +880,31 @@ var app = {
             $('#gameCodeDisplay .codeBox').html(data.gameCode);
             $('#gameCodeDisplay').removeClass('hide');
             $('#createGameBtn').prop('disabled', true);
+            // Initialize audio settings on server when game is created
+            app.socket.emit('audioControl', {
+                type: 'backgroundVolume',
+                volume: audioManager.backgroundVolume
+            });
+            app.socket.emit('audioControl', {
+                type: 'sfxVolume',
+                volume: audioManager.sfxVolume
+            });
+            app.socket.emit('audioControl', {
+                type: 'mute',
+                isMuted: audioManager.isMuted
+            });
         });
 
         app.socket.on('gameJoined', (data) => {
             app.gameCode = data.gameCode;
             app.isHost = data.isHost;
+            // Show audio controls if joining as host
+            if (app.isHost) {
+                app.board.find('.audioControlsContainer').removeClass('hide');
+            } else {
+                // Request localStorage sync from host when joining as player
+                app.requestLocalStorageSync();
+            }
             // Sync game state if provided
             if (data.gameState) {
                 // Wait for questions to load first
@@ -530,6 +924,16 @@ var app = {
         app.socket.on('gameStateUpdate', (gameState) => {
             app.syncGameState(gameState);
         });
+        
+        // Listen for audio updates from host
+        app.socket.on('audioUpdate', (audioData) => {
+            // Apply audio settings to all players (host and audience)
+            audioManager.applyAudioSettings({
+                isMuted: audioData.isMuted,
+                backgroundVolume: audioData.backgroundVolume,
+                sfxVolume: audioData.sfxVolume
+            });
+        });
 
         app.socket.on('joinError', (data) => {
             $('#joinError').html(data.message).removeClass('hide');
@@ -537,6 +941,26 @@ var app = {
 
         app.socket.on('playerJoined', (data) => {
             console.log('Player joined:', data.playerId);
+            // If we're the host, sync localStorage to the new player
+            if (app.isHost && app.gameCode) {
+                setTimeout(() => {
+                    app.syncLocalStorageToPlayers();
+                }, 500);
+            }
+        });
+        
+        // Listen for localStorage sync from host
+        app.socket.on('localStorageSync', (data) => {
+            console.log('Received localStorage sync from host');
+            app.updateLocalStorageFromSync(data.data);
+        });
+        
+        // Host receives request for localStorage sync
+        app.socket.on('requestLocalStorageSync', (data) => {
+            if (app.isHost && app.gameCode) {
+                console.log('Received localStorage sync request from player');
+                app.syncLocalStorageToPlayers();
+            }
         });
     }
 };

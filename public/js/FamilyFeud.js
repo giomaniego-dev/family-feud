@@ -15,7 +15,18 @@ var app = {
                     <div class='lobbyOptions'>
                         <div class='lobbySection'>
                             <h2>Host a Game</h2>
-                            <button id='createGameBtn' class='lobbyBtn'>Create New Game</button>
+                            <div id='uploadSection'>
+                                <label for='questionsFile' class='fileUploadLabel'>
+                                    <input type='file' id='questionsFile' accept='.json' style='display: none;'/>
+                                    <span class='fileUploadBtn'>Upload Questions (JSON)</span>
+                                </label>
+                                <a href='/public/data/FamilyFeud_Questions.json' download='FamilyFeud_Questions_Sample.json' class='downloadSampleBtn'>Download Sample Questions</a>
+                                <div id='uploadStatus' class='uploadStatus hide'></div>
+                                <div id='questionsInfo' class='questionsInfo hide'>
+                                    <p>Questions loaded: <span id='questionsCount'>0</span></p>
+                                </div>
+                            </div>
+                            <button id='createGameBtn' class='lobbyBtn' disabled>Create New Game</button>
                             <div id='gameCodeDisplay' class='gameCodeDisplay hide'>
                                 <p>Game Code:</p>
                                 <div class='codeBox'></div>
@@ -90,6 +101,20 @@ var app = {
     jsonLoaded: (data) => {
         app.allData = data;
         app.questions = Object.keys(data);
+        
+        // Store in localStorage
+        try {
+            localStorage.setItem('familyFeudQuestions', JSON.stringify(data));
+            console.log('Questions stored in localStorage');
+        } catch (e) {
+            console.error('Failed to store questions in localStorage:', e);
+        }
+        
+        // Update UI to show questions are loaded
+        $('#questionsCount').text(app.questions.length);
+        $('#questionsInfo').removeClass('hide');
+        $('#createGameBtn').prop('disabled', false);
+        
         // If there's pending game state, sync it now
         if (app.pendingGameState) {
             app.syncGameState(app.pendingGameState);
@@ -98,6 +123,71 @@ var app = {
             app.makeQuestion(app.currentQ);
         }
         app.board.find('.host').hide();
+    },
+    
+    loadQuestionsFromStorage: () => {
+        try {
+            const stored = localStorage.getItem('familyFeudQuestions');
+            if (stored) {
+                const data = JSON.parse(stored);
+                app.jsonLoaded(data);
+                return true;
+            }
+        } catch (e) {
+            console.error('Failed to load questions from localStorage:', e);
+        }
+        return false;
+    },
+    
+    handleFileUpload: (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+        
+        if (file.type !== 'application/json' && !file.name.endsWith('.json')) {
+            $('#uploadStatus').html('Error: Please upload a JSON file').removeClass('hide').addClass('error');
+            return;
+        }
+        
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                
+                // Validate the data structure
+                if (typeof data !== 'object' || Array.isArray(data)) {
+                    throw new Error('Invalid format: Expected an object with questions as keys');
+                }
+                
+                // Check if it has at least one question
+                const keys = Object.keys(data);
+                if (keys.length === 0) {
+                    throw new Error('No questions found in file');
+                }
+                
+                // Validate answer format (should be array of arrays)
+                for (let key of keys) {
+                    if (!Array.isArray(data[key])) {
+                        throw new Error(`Invalid answer format for question: ${key}`);
+                    }
+                }
+                
+                // Load the data
+                app.jsonLoaded(data);
+                $('#uploadStatus').html('Questions loaded successfully!').removeClass('hide error info').addClass('success');
+                
+                // Clear the file input
+                $('#questionsFile').val('');
+            } catch (error) {
+                console.error('Error parsing JSON:', error);
+                $('#uploadStatus').html('Error: ' + error.message).removeClass('hide').addClass('error');
+            }
+        };
+        
+        reader.onerror = () => {
+            $('#uploadStatus').html('Error reading file').removeClass('hide').addClass('error');
+        };
+        
+        reader.readAsText(file);
     },
 
     // Action functions
@@ -376,12 +466,20 @@ var app = {
     
     // Inital function
     init: () => {
-        // Load game data
-        $.getJSON(app.jsonFile, app.jsonLoaded);
-
-        // Append lobby and board to body
+        // Append lobby and board to body first
         $('body').append(app.lobby);
         $('body').append(app.board);
+        
+        // File upload event listener
+        $('#questionsFile').on('change', app.handleFileUpload);
+        
+        // Try to load questions from localStorage first
+        const loadedFromStorage = app.loadQuestionsFromStorage();
+        
+        // If not in localStorage, show message to upload questions
+        if (!loadedFromStorage) {
+            $('#uploadStatus').html('Please upload a questions file to start. Download the sample file to see the format.').removeClass('hide').addClass('info');
+        }
         
         // Lobby event listeners
         $('#createGameBtn').on('click', app.createGame);

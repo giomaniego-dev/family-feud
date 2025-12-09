@@ -7,7 +7,33 @@ var app = {
     jsonFile: "../public/data/FamilyFeud_Questions.json",
     currentQ: 0,
     wrong:0,
-    board: $(`<div class='gameBoard'>
+    gameCode: null,
+    isHost: false,
+    lobby: $(`<div class='lobby'>
+                <div class='lobbyContent'>
+                    <h1>Family Feud</h1>
+                    <div class='lobbyOptions'>
+                        <div class='lobbySection'>
+                            <h2>Host a Game</h2>
+                            <button id='createGameBtn' class='lobbyBtn'>Create New Game</button>
+                            <div id='gameCodeDisplay' class='gameCodeDisplay hide'>
+                                <p>Game Code:</p>
+                                <div class='codeBox'></div>
+                                <p class='instruction'>Share this code with players</p>
+                                <button id='startGameBtn' class='lobbyBtn'>Start Game</button>
+                            </div>
+                        </div>
+                        <div class='lobbySeparator'>OR</div>
+                        <div class='lobbySection'>
+                            <h2>Join a Game</h2>
+                            <input type='text' id='gameCodeInput' placeholder='Enter Game Code' maxlength='6'/>
+                            <button id='joinGameBtn' class='lobbyBtn'>Join Game</button>
+                            <div id='joinError' class='error hide'></div>
+                        </div>
+                    </div>
+                </div>
+            </div>`),
+    board: $(`<div class='gameBoard hide'>
 
                 <!--- Scores --->
                 <div class='score' id='boardScore'>0</div>
@@ -64,13 +90,23 @@ var app = {
     jsonLoaded: (data) => {
         app.allData = data;
         app.questions = Object.keys(data);
-        app.makeQuestion(app.currentQ);
+        // If there's pending game state, sync it now
+        if (app.pendingGameState) {
+            app.syncGameState(app.pendingGameState);
+            app.pendingGameState = null;
+        } else {
+            app.makeQuestion(app.currentQ);
+        }
         app.board.find('.host').hide();
-        $('body').append(app.board);
     },
 
     // Action functions
-    makeQuestion: (eNum) => {
+    makeQuestion: (eNum, flippedCards) => {
+        if (eNum >= app.questions.length) {
+            console.log('No more questions');
+            return;
+        }
+        
         var qText = app.questions[eNum];
         var qAnswr = app.allData[qText];
 
@@ -138,6 +174,20 @@ var app = {
             backfaceVisibility: "hidden"
         });
         cards.data("flipped", false);
+        
+        // If there are flipped cards to sync, flip them now
+        if (flippedCards && flippedCards.length > 0) {
+            setTimeout(() => {
+                flippedCards.forEach(cardNum => {
+                    var card = $('[data-id="' + cardNum + '"]');
+                    if (card.length && !card.data("flipped")) {
+                        TweenLite.set(card, { rotationX: -180 });
+                        card.data("flipped", true);
+                        app.getBoardScore();
+                    }
+                });
+            }, 100);
+        }
     },
     getBoardScore: () => {
         var cards = app.board.find('.card');
@@ -158,11 +208,18 @@ var app = {
             var: score,
             onUpdate: function () {
                 boardScore.html(Math.round(currentScore.var));
+                // Send board score update to server
+                if (app.gameCode && app.role === "host") {
+                    app.socket.emit("talking", {
+                        trigger: 'boardScoreUpdate',
+                        boardScore: Math.round(currentScore.var)
+                    });
+                }
             },
             ease: Power3.easeOut
         });
     },
-    awardPoints: (num) => {
+    awardPoints: (num, targetScore) => {
         var boardScore = app.board.find('#boardScore');
         var currentScore = {
             var: parseInt(boardScore.html())
@@ -171,7 +228,7 @@ var app = {
         var teamScore = {
             var: parseInt(team.html())
         };
-        var teamScoreUpdated = (teamScore.var + currentScore.var);
+        var teamScoreUpdated = targetScore !== undefined ? targetScore : (teamScore.var + currentScore.var);
         TweenMax.to(teamScore, 1, {
             var: teamScoreUpdated,
             onUpdate: function () {
@@ -188,17 +245,80 @@ var app = {
             ease: Power3.easeOut
         });
     },
-    changeQuestion: () => {
-        app.currentQ++;
+    syncGameState: (gameState) => {
+        if (!gameState) return;
+        
+        // Sync question
+        if (gameState.currentQuestion !== undefined) {
+            app.currentQ = gameState.currentQuestion;
+            app.makeQuestion(app.currentQ, gameState.flippedCards || []);
+        }
+        
+        // Sync scores
+        if (gameState.team1Score !== undefined) {
+            app.board.find("#team1").html(gameState.team1Score);
+        }
+        if (gameState.team2Score !== undefined) {
+            app.board.find("#team2").html(gameState.team2Score);
+        }
+        if (gameState.boardScore !== undefined) {
+            app.board.find("#boardScore").html(gameState.boardScore);
+        }
+        
+        // Recalculate board score after syncing flipped cards
+        if (gameState.flippedCards && gameState.flippedCards.length > 0) {
+            setTimeout(() => {
+                app.getBoardScore();
+            }, 200);
+        }
+    },
+    changeQuestion: (questionIndex) => {
+        if (questionIndex !== undefined) {
+            app.currentQ = questionIndex;
+        } else {
+            app.currentQ++;
+        }
         app.makeQuestion(app.currentQ);
     },
     makeHost: () => {
         app.role = "host";
+        app.isHost = true;
         app.board.find(".hide").removeClass('hide');
         app.board.addClass('showHost');
         app.socket.emit("talking", {
             trigger: 'hostAssigned'
         });
+    },
+    createGame: () => {
+        app.socket.emit('createGame', {});
+    },
+    joinGame: () => {
+        const code = $('#gameCodeInput').val().trim().toUpperCase();
+        if (code.length === 6) {
+            app.socket.emit('joinGame', { gameCode: code });
+        } else {
+            $('#joinError').html('Please enter a 6-character game code').removeClass('hide');
+        }
+    },
+    startGame: () => {
+        app.lobby.addClass('hide');
+        app.board.removeClass('hide');
+        if (app.isHost) {
+            // Host starts at question 0
+            app.currentQ = 0;
+            if (app.questions && app.questions.length > 0) {
+                app.makeQuestion(0);
+            }
+            app.makeHost();
+            // Sync initial state to server
+            app.socket.emit("talking", {
+                trigger: 'newQuestion',
+                questionIndex: 0
+            });
+        } else {
+            // Request current game state when joining as audience
+            app.socket.emit('requestGameState');
+        }
     },
     flipCard: (n) => {
         console.log("card");
@@ -234,7 +354,7 @@ var app = {
         console.log(data);
         switch (data.trigger) {
             case "newQuestion":
-                app.changeQuestion();
+                app.changeQuestion(data.questionIndex);
                 break;
             case "awardTeam1":
                 app.awardPoints(1);
@@ -256,16 +376,70 @@ var app = {
     
     // Inital function
     init: () => {
-
+        // Load game data
         $.getJSON(app.jsonFile, app.jsonLoaded);
 
+        // Append lobby and board to body
+        $('body').append(app.lobby);
+        $('body').append(app.board);
+        
+        // Lobby event listeners
+        $('#createGameBtn').on('click', app.createGame);
+        $('#joinGameBtn').on('click', app.joinGame);
+        $('#startGameBtn').on('click', app.startGame);
+        $('#gameCodeInput').on('input', () => {
+            $('#joinError').addClass('hide');
+            $('#gameCodeInput').val($('#gameCodeInput').val().toUpperCase());
+        });
+
+        // Board event listeners
         app.board.find('#hostBTN'    ).on('click', app.makeHost);
         app.board.find('#awardTeam1' ).on('click', { trigger: 'awardTeam1' }, app.talkSocket);
         app.board.find('#awardTeam2' ).on('click', { trigger: 'awardTeam2' }, app.talkSocket);
         app.board.find('#newQuestion').on('click', { trigger: 'newQuestion'}, app.talkSocket);
         app.board.find('#wrong'      ).on('click', { trigger: 'wrong'      }, app.talkSocket);
 
-        app.socket.on('listening', app.listenSocket)
+        // Socket event listeners
+        app.socket.on('listening', app.listenSocket);
+        
+        app.socket.on('gameCreated', (data) => {
+            app.gameCode = data.gameCode;
+            app.isHost = true;
+            $('#gameCodeDisplay .codeBox').html(data.gameCode);
+            $('#gameCodeDisplay').removeClass('hide');
+            $('#createGameBtn').prop('disabled', true);
+        });
+
+        app.socket.on('gameJoined', (data) => {
+            app.gameCode = data.gameCode;
+            app.isHost = data.isHost;
+            // Sync game state if provided
+            if (data.gameState) {
+                // Wait for questions to load first
+                if (app.questions) {
+                    app.syncGameState(data.gameState);
+                } else {
+                    // Store state to sync after questions load
+                    app.pendingGameState = data.gameState;
+                }
+            }
+            // Automatically start for audience members
+            setTimeout(() => {
+                app.startGame();
+            }, 500);
+        });
+        
+        app.socket.on('gameStateUpdate', (gameState) => {
+            app.syncGameState(gameState);
+        });
+
+        app.socket.on('joinError', (data) => {
+            $('#joinError').html(data.message).removeClass('hide');
+        });
+
+        app.socket.on('playerJoined', (data) => {
+            console.log('Player joined:', data.playerId);
+        });
     }
 };
 app.init();
